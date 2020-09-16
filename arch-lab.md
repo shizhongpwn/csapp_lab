@@ -97,3 +97,18 @@ word aluB = [
 bool set_cc = icode in { IOPQ,IIADDQ };
 ```
 
+## 知识铺垫
+
+![image-20200913124627687](arch-lab.assets/image-20200913124627687.png)
+
+这个不过是分开了指令流程，可以看机器码看出规律。
+
+### 重点
+
+其实这个实验的关键在于底层指令怎么写，理解很好理解吧。
+
+![image-20200913125009256](arch-lab.assets/image-20200913125009256.png)
+
+可以根据实验里面的提示进行写。
+
+> 借鉴（照抄）了大佬的博客帮助理解：https://github.com/warm-winter/sakura
