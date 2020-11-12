@@ -421,6 +421,25 @@ int main()
 
 可以看到fd2和fd虽然是两个文件描述符，但是其实他们是相等的，所以`dup2(fd2,fd)`不会对文件描述符进行关闭，所以两个都可以用，又因为他们指向的是同一个文件，所以`文件位置`会出现叠加的情况。
 
+~~~bash
+pwndbg> info proc
+process 16216
+cmdline = '/home/sh/Test/IO/test3'
+cwd = '/home/sh/Test/IO'
+exe = '/home/sh/Test/IO/test3'
+pwndbg> shell ls -l /proc/1621
+16210/ 16213/ 16216/ 
+pwndbg> shell ls -l /proc/16216/fd
+总用量 0
+lrwx------ 1 sh sh 64 11月 11 04:06 0 -> /dev/pts/0
+lrwx------ 1 sh sh 64 11月 11 04:06 1 -> /dev/pts/0
+lrwx------ 1 sh sh 64 11月 11 04:06 2 -> /dev/pts/0
+lr-x------ 1 sh sh 64 11月 11 04:06 3 -> '/home/sh/Test/IO/a~ (deleted)'
+lr-x------ 1 sh sh 64 11月 11 04:06 4 -> '/home/sh/Test/IO/a~ (deleted)'
+~~~
+
+在`/proc/pid/fd`里面存储文件相关内容。
+
 ## 标准IO
 
 
