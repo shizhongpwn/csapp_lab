@@ -41,6 +41,10 @@ int open("filename",int flags,mode_t mode);
 旁注：
 
 * linux里面`size_t`=`unsigned int` 但是 `ssize_t`=`long`，read的返回值是`ssize_t`类型的。
+* 某些情况，`read`和`write`传输的字节比应用程序要求的少：
+  * 遇到`EOF`,这大可能文件读完了
+  * 从终端读取文本行，因为遇到`\n`会停。
+  * 读写网络套接字`socket`，网络延迟，或者内部缓存约束会引起r其返回不足值，或者对`Linux`管道调用`read,write`.
 
 ## RIO包实现健壮读写
 
@@ -48,7 +52,7 @@ int open("filename",int flags,mode_t mode);
 
 RIO提供两类不同的函数：
 
-* 无缓冲区的输入输出函数。一般应用于网络。
+* 无缓冲区的输入输出函数。
 
   * ~~~c
     ssize_t rio_readn(int fd,void *usrbuf, size_t n);
@@ -97,7 +101,7 @@ RIO提供两类不同的函数：
     }
     ~~~
 
-* 带缓冲区的输入函数。一般应用于应用,这其实避免了每次读取都要求陷入内核，大大减小了开销，但是可能不会及时传输。
+* 带缓冲区的输入函数。一般应用于应用,这其实避免了每次读取都要求陷入内核，大大减小了开销。
 
   * ~~~c
     void rio_readinitb(rio_t *rp,int fd); //将描述符fd和地址rp处的一个类型为rio_t的读缓冲区联系起来。
@@ -121,7 +125,7 @@ RIO提供两类不同的函数：
         rp->rio_cnt = 0;  
         rp->rio_bufptr = rp->rio_buf;
     }
-    static ssize_t rio_read(rio_t *rp, char *usrbuf, size_t n)
+    static ssize_t rio_readnb(rio_t *rp, char *usrbuf, size_t n)
     {
         int cnt;
         while (rp->rio_cnt <= 0) {  //缓冲区为空，调用read填充
@@ -145,22 +149,6 @@ RIO提供两类不同的函数：
         rp->rio_bufptr += cnt;
         rp->rio_cnt -= cnt;
         return cnt;
-    }
-    ssize_t rio_readnb(rio_t *rp, void *usrbuf, size_t n) //这个其实就是利用rio_read来实现特定字节数量的读取
-    {
-        size_t nleft = n;
-        ssize_t nread;
-        char *bufp = usrbuf;
-        
-        while (nleft > 0) {
-    	if ((nread = rio_read(rp, bufp, nleft)) < 0) 
-                return -1;          /* errno set by read() */ 
-    	else if (nread == 0)
-    	    break;              /* EOF */
-    	nleft -= nread;
-    	bufp += nread;
-        }
-        return (n - nleft);         /* return >= 0 */
     }
     ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen)  //这个无非是遇到换行就跳转结束。
     {
@@ -194,8 +182,8 @@ RIO提供两类不同的函数：
   ~~~c
   #include<unistd.h>
   #include<sys/stat.h>
-  int stat(const char *filename,struct stat *buf);
-  int fstat(int fd,struct stat *buf);
+  int stat(const char *filename,struct stat *buf); //第一个参数是文件名
+  int fstat(int fd,struct stat *buf); //第一个参数是文件描述符。
   ~~~
   
   ~~~c
@@ -442,5 +430,241 @@ lr-x------ 1 sh sh 64 11月 11 04:06 4 -> '/home/sh/Test/IO/a~ (deleted)'
 
 ## 标准IO
 
+C语言定义的`标准I/O库`提过了`Unix I/O`的较高级别替代，提供了比如以下：
 
+* `fopen`
+* `flcose`
+* `fread`
+* `fwrite`
+* `fgets`
+* `fputs`
+* `sacnf,printf`
+
+`标准I/O`将打开的文件模型化为一个流，一个流就是一个指向`FILE`类型的结构体指针。
+
+~~~c
+#inlcude<stdio.h>
+extern FILE *stdin; // descriptor 0
+extern FILE *stdout; // descriptor 1
+extern FILE *stderr; // descriptor 2
+~~~
+
+`FILE`其实是对文件描述符和流缓冲区的抽象，流缓存区和`RIO读缓冲区`是一样的，为的是`Linux I/O`系统调用尽可能的少。
+
+## 总结
+
+![image-20201112090231469](系统级IO.assets/image-20201112090231469.png)
+
+IO使用原则：
+
+* 尽量使用标准IO
+* 不要用scanf或者`rio_readline`读二进制文件，里面可能`0xa`太多了。
+* 网络套接字使用`RIO`函数。
+  * Linux抽象网络为套接字的文件类型，称为`套接字描述符`。
+* 标准IO限制：
+
+![image-20201112092518414](系统级IO.assets/image-20201112092518414.png)
+
+![image-20201112092527953](系统级IO.assets/image-20201112092527953.png)
+
+### 练习题：
+
+10.8
+
+~~~c
+#include <sys/stat.h>
+#include <unistd.h>
+#include<stdio.h>
+int main(int argc,char **argv)
+{
+    struct stat stat1;
+    char *type, *readok;
+    fstat(argv[1],&stat1);
+    if(S_ISREG(stat1.st_mode))
+    {
+        type = "regular";
+    }
+    else if(S_ISDIR(stat1.st_mode))
+    {
+        type = "directory";
+    }
+    else{
+        type = "ohter";
+    }
+    if(stat1.st_mode & S_IRUSR)
+    {
+        readok = "ok";
+    }
+    else{
+        readok = "no";
+    }
+    printf("type %s, read --> %s\n",type,readok);
+    return 0;
+}
+~~~
+
+其实就`stat`函数为`fstat`就可以了
+
+10.10
+
+Test.c
+
+~~~c++
+#include"csapp.h"
+int main(int argc,char *argv[])
+{
+    int n;
+    rio_t rio;
+    char buf[MAXLINE];
+    char *str1 = "infile";
+    if(argc == 1)
+    {
+    rio_readinitb(&rio,STDIN_FILENO);
+    while((n=rio_readlineb(&rio,buf,MAXLINE))!=0)
+    {
+        rio_writen(STDOUT_FILENO,buf,n);
+    }
+    }
+    else
+    {
+        int opt = getopt(argc,argv,str1);
+        const char *filename = argv[optind+1];
+        int fd = open(filename,O_RDONLY,0);
+        struct stat stat1;
+        stat(filename,&stat1);
+        size_t size = stat1.st_size;
+        char buf2[size+1];
+        rio_readn(fd,buf2,size);
+        rio_writen(STDOUT_FILENO,buf2,size);
+    }
+    return 0;
+}
+~~~
+
+csapp.c
+
+~~~c
+#include"csapp.h"
+void rio_readinitb(rio_t *rp, int fd) 
+{
+    rp->rio_fd = fd;  
+    rp->rio_cnt = 0;  
+    rp->rio_bufptr = rp->rio_buf;
+}
+static ssize_t rio_read(rio_t *rp, char *usrbuf, size_t n)
+{
+    int cnt;
+    while(rp->rio_cnt <= 0) //buf为空
+    {
+        rp->rio_cnt = read(rp->rio_fd, rp->rio_buf, sizeof(rp->rio_buf));
+        if( rp->rio_cnt < 0)
+        {
+            if( errno != EINTR)
+                return -1;
+        }
+        else if( rp->rio_cnt == 0)  //EOF 结尾
+            return 0;
+        else
+            rp->rio_bufptr = rp->rio_buf;
+    }
+    cnt = n;
+    if( rp->rio_cnt < n)
+    {
+        cnt =rp->rio_cnt;
+    }
+    memcpy(usrbuf, rp->rio_bufptr,cnt);
+    rp->rio_bufptr += cnt;
+    rp->rio_cnt -= cnt;
+    return cnt;
+}
+ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen)  //这个无非是遇到换行就跳转结束。
+{
+    int n, rc;
+    char c, *bufp = usrbuf;
+
+    for (n = 1; n < maxlen; n++) { 
+        if ((rc = rio_read(rp, &c, 1)) == 1) {
+	    *bufp++ = c;
+	    if (c == '\n') {
+                n++;
+     		break;
+            }
+	} else if (rc == 0) {
+	    if (n == 1)
+		    return 0; //第一次读取就到了EOF
+	    else
+		    break;    //读了一些数据后遇到EOF
+	} else
+	    return -1;	  /* Error */
+    }
+    *bufp = 0;
+    return n-1;
+}
+ssize_t rio_readn(int fd, void *usrbuf, size_t n)
+{
+    size_t nleft = n; //剩下未读字符数
+    ssize_t nread;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+	if ((nread = read(fd, bufp, nleft)) < 0) {
+        if (errno == EINTR)  //被信号处理函数中断
+		nread = 0;      //本次读到0个字符，再次读取
+	    else
+		return -1;      //出错，errno由read设置
+    }
+	else if (nread == 0) //读取到EOF
+        break;
+    nleft -= nread; //剩下的字符数减去本次读到的字符数
+	bufp += nread;  //缓冲区指针向右移动
+    }
+    //返回实际读取的字符数
+    return (n - nleft);         /* return >= 0 */
+}
+ssize_t rio_writen(int fd, void *usrbuf, size_t n)  //其原理和read类似
+{
+    size_t nleft = n;
+    ssize_t nwritten;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+	if ((nwritten = write(fd, bufp, nleft)) <= 0) {
+	    if (errno == EINTR)
+		nwritten = 0;
+	    else
+		return -1;
+	}
+	nleft -= nwritten;
+	bufp += nwritten;
+    }
+    return n;
+}
+~~~
+
+csapp.h
+
+~~~c
+#ifndef _CSAAP_H
+#define _CSAAP_H
+#include<stdio.h>
+#include<errno.h>
+#include<unistd.h>
+#include<sys/stat.h>
+#include<sys/types.h>
+#include<fcntl.h>
+#define RIO_BUFSIZE 500
+#define MAXLINE 200
+typedef struct {
+    int rio_fd;                //与内部缓冲区关联的描述符
+    int rio_cnt;               //缓冲区中剩下的字节数
+    char *rio_bufptr;          //指向缓冲区中下一个未读的字节
+    char rio_buf[RIO_BUFSIZE];
+} rio_t;
+void rio_readinitb(rio_t *rp,int fd); //将描述符fd和地址rp处的一个类型为rio_t的读缓冲区联系起来。
+static ssize_t rio_read(rio_t *rp,char *usrbuf, size_t n);
+ssize_t rio_readn(int fd,void *usrbuf, size_t n);
+ssize_t rio_writen(int fd,void *usrbuf,size_t n);
+ssize_t rio_readlineb(rio_t *rp,void *usrbuf,size_t n);
+#endif
+~~~
 
