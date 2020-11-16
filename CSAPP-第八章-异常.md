@@ -110,6 +110,32 @@
 
 ![image-20201114125525170](CSAPP-第八章-异常.assets/image-20201114125525170.png)
 
+## 进程控制
+
+> 记录自己记得不清楚的点。
+
+`init`进程：其在系统启动的时候创建，是所有进程的祖先，如果一个父进程没有回收它的僵死子进程就终止了，那么内核会安排`init进程`去回收他们。
+
+`waitpid函数`
+
+~~~c
+#include<sys/types.h>
+#include<sys/wait.h>
+pid_t waitpid(pid_t pid,int *statusp,int options);
+~~~
+
+默认情况`options=0`，waitpid挂起调用进程的执行，直到它的`等待集合`中的一个子进程终止。如果等待集合里面的一个进程在调用的时候就已经终止了，那么`waitpid`就立刻返回，`waitpid`返回导致waitpid返回的已终止的子进程的`PID`,此时子进程已经被回收，内核会冲系统中删除掉它的所有痕迹。
+
+1. 判定等待集合的成员（由参数pid来判定）
+   1. 如果pid>0，等待集合就是一个单独的子进程，进程id=pid
+   2. 如果pid=-1,那么等待集合就是由父进程所有的子进程组成的。
+2. 修改默认行为
+   1. `options`选项：
+      1. ![image-20201116200115240](CSAPP-第八章-异常.assets/image-20201116200115240.png)
+   2. `statusp`参数：
+      1. ![image-20201116201210382](CSAPP-第八章-异常.assets/image-20201116201210382.png)
+3. 如果没有调用子进程，`waitpid`返回-1，并且设置`errno`为`ECHILD`，如果`waitpid函数`被一个信号中断，它返回`-1`，设置`errno`为`EINTR`.
+
 
 
 
