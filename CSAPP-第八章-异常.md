@@ -136,6 +136,165 @@ pid_t waitpid(pid_t pid,int *statusp,int options);
       1. ![image-20201116201210382](CSAPP-第八章-异常.assets/image-20201116201210382.png)
 3. 如果没有调用子进程，`waitpid`返回-1，并且设置`errno`为`ECHILD`，如果`waitpid函数`被一个信号中断，它返回`-1`，设置`errno`为`EINTR`.
 
+测试案例：
+
+~~~c
+#include<stdio.h>
+#include<sys/types.h>
+#include<sys/wait.h>
+#include<errno.h>
+int main()
+{
+    int statu,i;
+    pid_t pid;
+    for(i=0;i<10;i++)
+    {
+        if((pid=fork())==0)
+        {
+            exit(100+i);
+        }
+    }
+    while(((pid = waitpid(-1,&statu,NULL))>0))
+    {
+        if(WIFEXITED(statu))
+        {
+            printf("child process pid = %d over normally with statu  = %d\n",pid,WEXITSTATUS(statu));
+        }
+        else
+        {
+            printf("child process pid = %d over over over\n",pid);
+        }
+    }
+    if(errno != ECHILD)
+    {
+        printf("waitpid error\n");
+        exit(-1);
+    }
+    return 0;
+}
+~~~
+
+![image-20201117075955246](CSAPP-第八章-异常.assets/image-20201117075955246.png)
+
+看出程序不会按照特定顺序回收子进程。
+
+测试2：
+
+~~~c
+#include<stdio.h>
+#include<sys/types.h>
+#include<sys/wait.h>
+#include<errno.h>
+int main()
+{
+    int statu,i;
+    pid_t pid[10];
+    for(i=0;i<10;i++)
+    {
+        if((pid[i]=fork())==0)
+        {
+            exit(100+i);
+        }
+    }
+    i=0;
+    pid_t repid;
+    while(((repid = waitpid(pid[i],&statu,NULL))>0))
+    {
+        if(WIFEXITED(statu))
+        {
+            printf("child process pid = %d over normally with statu  = %d\n",repid,WEXITSTATUS(statu));
+        }
+        else
+        {
+            printf("child process pid = %d over over over\n",repid);
+        }
+        i++;
+    }
+    if(errno != ECHILD)
+    {
+        printf("waitpid error\n");
+        exit(-1);
+    }
+    return 0;
+}
+~~~
+
+![image-20201117080641604](CSAPP-第八章-异常.assets/image-20201117080641604.png)
+
+这样子进程可以按照特定顺序被回收。
+
+`加载并运行程序`
+
+~~~c
+#include<unistd.h>
+int execve(const char *filename,const char *argv[],const char *envp[]);
+~~~
+
+![image-20201117081509230](CSAPP-第八章-异常.assets/image-20201117081509230.png)
+
+环境变量字符串都是`键值对`的形式。
+
+![image-20201117081846673](CSAPP-第八章-异常.assets/image-20201117081846673.png)
+
+这个点倒是没有注意到哎**在栈的顶部是系统启动函数libc_start_main**的栈帧。
+
+`操作环境数组`
+
+~~~c
+#include<stdlib.h>
+char *getenv(const char *name);
+~~~
+
+该函数搜索键值对里面的`name`返回一个执行`value`的指针，否则返回`NULL`.
+
+~~~c
+#include<stdlib.h>
+int setenv(const char* name,const char* newvalue, int overwrite); //成功返回1，失败返回0
+void unsetenv(const char  *name);
+~~~
+
+理解`envp`和`argv`
+
+~~~c
+#include<stdio.h>
+#include<stdlib.h>
+int main(int argc,char *argv[],char *envp[])
+{
+    printf("command line argv is :\n");
+    for(int i=0;argv[i]!=NULL;i++)
+    {
+        printf("          argv[%d] =  %s\n",i,argv[i]);
+    }
+
+    printf("envp is :\n");
+    for(int i=0;envp[i]!=NULL;i++)
+    {
+        printf("          envp[%d] =  %s\n",i,envp[i]);
+    }
+    return 0;
+}
+~~~
+
+## 信号
+
+![image-20201117094243473](CSAPP-第八章-异常.assets/image-20201117094243473.png)
+
+底层的硬件异常都是由内核处理程序运行的，正常情况下，对用户而言是不可见的，信号提供了一种机制可以通知用户发生了这种异常。
+
+值得注意的几个信号机制：
+
+* `ctrl+C`内核会发送`SIGINT`给这个前台进程组里面的每个进程。
+* 一个进程可以通过向另一个进程发送`SIGKILL`信号终止它。
+* 当一个子进程终止的时候，内核会发送一个`SIGCHLD`信号给父进程。
+
+
+
+
+
+
+
+
+
 
 
 
