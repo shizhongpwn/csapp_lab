@@ -286,6 +286,232 @@ int main(int argc,char *argv[],char *envp[])
 * `ctrl+C`内核会发送`SIGINT`给这个前台进程组里面的每个进程。
 * 一个进程可以通过向另一个进程发送`SIGKILL`信号终止它。
 * 当一个子进程终止的时候，内核会发送一个`SIGCHLD`信号给父进程。
+* `ctrl+z`内核会发送一个`SIGTSTP`信号到前台进程组中的每一个进程，一般是停止（挂起）前台作业。
+
+**信号处理规则**
+
+一个发出但是没有被接受的信号叫做`待处理信号`，**任何时刻，一种类型至多只会有一个待处理信号**，如果一个进程有一个类型为K的信号，那么任何接下来发送到这个进程的类型为K的信号都会被丢弃。
+
+信号阻塞：一个进程可以选择性的阻塞接受某种信号，当某种信号阻塞的时候，它仍然可以被发送，但是产生的待处理信号不会被接受，直到进程取消对这种信号的阻塞。
+
+内核在`pending`位向量中维护着待处理信号的集合，在`blocked`位向量中维护着被阻塞的信号集合。
+
+* 传送一个类型为k的信号，内核设置`pending`第k位，接受了一个类型k信号，内核会清除`pending`第k位。
+* 传送一个类型为
+
+位向量：
+
+> 位向量，也叫位图，是一个我们经常可以用到的数据结构，在使用小空间来处理大量数据方面有着得天独厚的优势。位向量，顾名思义就是「位构成的向量」，我们通常使用0来表示 false，1来表示 true，例：[010111] 我们就可以说它是一个位向量，它表示 [false true false true true true]。在位向量这个数据结构中，**我们常常把它的索引和它的值对应起来使用**。
+
+## 进程组
+
+信号机制基于`进程组`概念。
+
+~~~c
+#include<unistd.h>
+pid_t getpgrp(void); //返回进程的进程组ID
+~~~
+~~~c
+#include<stdio.h>
+#include<unistd.h>
+int main()
+{
+    
+    pid_t pid = getpgrp();
+    pid_t pid2 = getpid();
+    printf("进程组ID %d\n",pid);
+    printf("进程ID %d\n",pid2);
+    pid_t pid3;
+    if((pid3=fork())==0)
+    {
+        pid_t pid4 = getpgrp();
+        printf("子进程组ID %d\n",pid4);
+        exit(0);
+    }
+    printf("子进程ID = %d\n",pid3);
+    waitpid(-1,NULL,NULL);
+    return 0;
+}
+~~~
+
+![image-20201117131259996](CSAPP-第八章-异常.assets/image-20201117131259996.png)
+
+默认子进程和父进程同属一个进程组，可以通过`setpgid`函数改变自己或者其他进程的进程组。
+
+~~~c
+#include<unistd.h>
+int setpgid(pid_t pid,pid_t pgid);
+~~~
+
+将进程`pid`的进程组改变为`pgid`,如果`pid`为0，那么就使用当前进程的PID。如果`pgid`为0，那么就用`pid`指定的进程的`PID`作为进程组`ID`.
+
+~~~c
+#include<stdio.h>
+#include<unistd.h>
+int main()
+{
+    
+    pid_t pid = getpgrp();
+    pid_t pid2 = getpid();
+    printf("进程组ID %d\n",pid);
+    printf("进程ID %d\n",pid2);
+    pid_t pid3;
+    if((pid3=fork())==0)
+    {
+        sleep(1);
+        pid_t pid4 = getpgrp();
+        printf("子进程组ID %d\n",pid4);
+        exit(0);
+    }
+    setpgid(pid3,pid);
+    printf("子进程ID = %d\n",pid3);
+    waitpid(-1,NULL,NULL);
+    return 0;
+}
+~~~
+
+![image-20201117134512387](CSAPP-第八章-异常.assets/image-20201117134512387.png)
+
+`/bin/kill程序发送信号`
+
+> linux >/bin/kill -9 15213
+
+其中 9 是信号量ID，这代表发送`SIGKILL`信号给进程组`151213`中的每一个进程。
+
+`从键盘发送信号`：
+
+> linux > ls | sort
+
+linux 用`job`这个抽象概念来表示对一条命令行求值而创建的进程。
+
+![image-20201117140149894](CSAPP-第八章-异常.assets/image-20201117140149894.png)
+
+任何时刻，至多有一个前台作业和0个或者多个后台作业。
+
+shell 为每个作业创建独立的进程组，进程组ID通常取自作业中父进程中的一个。
+
+`kill函数发送信号`
+
+~~~c
+#include<sys/types.h>
+#include<signal.h>
+int kill(pid_t pid,int sig);
+~~~
+
+* pid>0:发送个特定进程`sig`信号
+* pid=0:发送信号`sig`给调用进程所在进程组的每一个进程，包括调用进程自己。
+* pid<0: 发送信号`sig`给进程组`|pid|（pid的绝对值）`中每个进程。
+
+`alarm函数发送信号`
+
+~~~c
+#include<unistd.h>
+unsigned int alarm(unsigned int secs); //返回前一次闹钟剩余的秒数，若没有设定闹钟，则为0
+~~~
+
+`alarm`函数安排内核在`secs`秒后发送一个`SIGALRM`信号给调用进程。
+
+* 任何情况下，调用`alarm`都会取消任何待处理的`闹钟`，并且返回闹钟剩下的秒数。
+* 如果没有任何等待处理的闹钟，就返回0。
+
+`接收信号：`
+
+内核把进程p从内核模式切换到用户模式。
+
+1. 检查未被阻塞的信号集合(`pending&~blocked`),集合为NULL那么内核控制传递到进程下一条逻辑指令。
+2. 如果非NULL，那么内核悬着集合里面某个信号k`通常是最小的k`并且强制进程接受该信号。
+3. 每种信号都有一种预定义的默认行为：
+   1. 进程终止
+   2. 进程终止并转储内存
+   3. 进程停止（挂起）直到被`SIGCONT`信号重启
+   4. 进程忽略该信号。
+4. **进程可以通过使用`signal`函数修改和信号相关联的默认行为**。
+   1. 但是`SIGSTOP`和`SIGKILL`默认行为不可更改。
+
+~~~c
+#include<signal.h>
+typedef void (*sighandler_t)(int); //这是把void 定位为一个函数指针了？。。。
+sighandler_t signal(int signum,sighandler_t handler);//若成功则为指向前次处理程序的指针，若出错则为SIG_ERR(不设置errno)
+~~~
+
+* 如果`handler`是`SIG_IGN`那么忽略类型为`signum`的信号。
+* 如果`handler`是`SIG_DFL`，那么类型为`signum`的信号恢复默认行为。
+* 否则,`handler`是用户定义的函数的地址，这个函数就是`信号处理程序`。
+
+~~~~c
+#include<stdio.h>
+#include<signal.h>
+void sigint_handler(int sig)
+{
+    printf("Caught SIGINT!!!\n");
+    exit(0);
+}
+int main()
+{
+    if(signal(SIGINT,sigint_handler) == SIG_ERR)
+    {
+        printf("error!!!\n");
+        exit(0);
+    }
+    pause();
+    return 0;
+}
+~~~~
+
+![image-20201117162600005](CSAPP-第八章-异常.assets/image-20201117162600005.png)
+
+练习8.7
+
+~~~c
+#include<stdio.h>
+#include<signal.h>
+unsigned int snooze(unsigned int secs)
+{
+    unsigned int left = sleep(secs);
+    printf("process sleep %llds \n",secs-left);
+    return secs-left;
+}
+void sigint_handler(int sig)
+{
+    printf("Caught SIGINT = %d!!!\n",sig);
+}
+int main(int argc,char *argv[])
+{
+    if(signal(SIGINT,sigint_handler) == SIG_ERR)
+    {
+        printf("error!!!\n");
+        exit(0);
+    }
+    snooze(atoi(argv[1]));
+    return 0;
+}
+~~~
+
+![image-20201117165847242](CSAPP-第八章-异常.assets/image-20201117165847242.png)
+
+`阻塞和解除信号`
+
+隐式阻塞机制：
+
+* 内核默认阻塞`当前处理程序`正在处理信号类型的信号。
+
+显示阻塞机制：
+
+* 应用程序使用`sigprocmask`函数和它的辅助函数，明确的阻塞和解除阻塞信号。
+
+~~~c
+#include<signal.h>
+int sigprocmask(int how,const sigset_t *set,sigset_t *oldset);
+int sigemptyset(sigset_t *set);
+int sigdelset(sigset_t *set,int signum);
+int sigdelset(sigset_t *set,int signum); //如果成功则返回0，出错返回-1
+int sigismember(const sigset_t *set,int signum); //若signum是set的成员则为1，如果
+~~~
+
+`sigprocmask`函数改变当前阻塞的信号集合（`blocked位向量`）具体行为依赖于`how`的值。
+
+* `SIG_BLOCK`:把`set`里面的信号添加到`blocked`中（blocked=blocked | set）.
+* `SIG_UNBLOCK`:从`blocked`中删除`set`中的信号。
 
 
 
