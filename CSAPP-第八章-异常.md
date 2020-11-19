@@ -550,6 +550,54 @@ int main()
 * 用`volatile`声明全局变量，这用来告诉编译器不要缓存这个变量。
 * `sig_atomic_t`声明标志，C提供了该整形数据结构，对它的读和写都是`原子性的`不可以被中断。
 
+~~~c
+#include<stdio.h>
+#include<signal.h>
+#include<errno.h>
+#define MAXBUF 255
+void handler1(int sig)
+{
+    int olderrno = errno;
+    if((waitpid(-1,NULL,0))<0)
+    {
+        printf("waitpid error\n");
+        exit(-1);
+    }
+    char *buf = "Handler-reaped-error\n";
+    write(1,buf,strlen(buf));
+    sleep(1);
+    errno = olderrno;
+}
+
+int main()
+{
+    int i,n;
+    char buf[MAXBUF];
+    if(signal(SIGCHLD,handler1)==SIG_ERR)
+    {
+        printf("signal error\n");
+        exit(0);
+    }
+    for(int i=0;i<3;i++)
+    {
+        if(fork()==0)
+        {
+            printf("Hello from child %d\n",(int)getpid());
+            exit(0);
+        }
+    }
+    if((n=read(0,buf,sizeof(buf)))<0)
+    {
+        printf("read error\n");
+        exit(0);
+    }
+    printf("Parent process input\n");
+    while(1)
+        ;
+    return 0;
+}
+~~~
+
 
 
 
