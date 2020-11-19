@@ -512,8 +512,38 @@ int sigismember(const sigset_t *set,int signum); //若signum是set的成员则�
 
 * `SIG_BLOCK`:把`set`里面的信号添加到`blocked`中（blocked=blocked | set）.
 * `SIG_UNBLOCK`:从`blocked`中删除`set`中的信号。
+* `SIG_SETMASK`:block=set
 
+如果`oldset`非空，那么`blocked`位向量保存在`oldset`中。
 
+~~~c
+#include<stdio.h>
+#include<signal.h>
+int main()
+{
+    sigset_t mask,prev_mask;
+    sigemptyset(&mask); //信号机初始化为空
+    sigaddset(&mask,SIGINT); //添加相关信号到信号集
+    sigprocmask(SIG_BLOCK,&mask,&prev_mask); //把信号集里面的信号添加到block
+    sigprocmask(SIG_SETMASK,&prev_mask,NULL); //恢复原来的信号集
+    return 0;
+}
+~~~
+
+`编写信号处理程序`
+
+* 处理程序与主程序并发运行。
+* 处理程序与主程序共享同样的全局变量
+* 不同的系统有不同的信号处理语义。
+
+注意事项：
+
+* 处理程序要尽可能简单。
+* 在处理程序中只调用异步信号安全的函数。异步安全：
+  * 可重入，比如访问只局部变量
+  * 或者它不可以被信号处理程序中断。
+
+![image-20201118140815556](CSAPP-第八章-异常.assets/image-20201118140815556.png)
 
 
 
