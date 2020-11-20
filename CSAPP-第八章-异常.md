@@ -506,6 +506,7 @@ int sigemptyset(sigset_t *set);
 int sigdelset(sigset_t *set,int signum);
 int sigdelset(sigset_t *set,int signum); //如果成功则返回0，出错返回-1
 int sigismember(const sigset_t *set,int signum); //若signum是set的成员则为1，如果
+int sigfillset(sigset_t *set); //把set对应的信号集初始化，把所有的信号加入到此信号集里面，成功返回0，失败返回-1.
 ~~~
 
 `sigprocmask`函数改变当前阻塞的信号集合（`blocked位向量`）具体行为依赖于`how`的值。
@@ -598,11 +599,212 @@ int main()
 }
 ~~~
 
+![image-20201120082243169](CSAPP-第八章-异常.assets/image-20201120082243169.png)
 
+可以看到出现了僵死进程，有一个子进程没有被回收。
 
+其原因在于代码没有解决信号不会排队等待的问题。
 
+* 第一个`SIGCHLD`被接收进行处理，处理过程中：
+  * 第二个`SIGCHLD`被阻塞，不会被接收。
+  * 第三个`SIGCHLD`因为有一个`SIGCHLD`被阻塞了，所以第三个被抛弃了。
 
+`解决方案`
 
+在一个信号处理程序里面，尽可能多的回收子进程。
+
+~~~c
+void handler1(int sig)
+{
+    int olderrno = errno;
+    while((waitpid(-1,NULL,0))>0)
+    {
+        char *buf = "Handler-reaped-error\n";
+        write(1,buf,strlen(buf));
+    }
+    if(errno != ECHILD)
+    {
+        char *buf2 = "waitpid-error";
+        write(1,buf2,strlen(buf2));
+    }
+    sleep(1);
+    errno = olderrno;
+}
+~~~
+
+![image-20201120083252030](CSAPP-第八章-异常.assets/image-20201120083252030.png)
+
+练习8.8
+
+~~~c
+#include<stdio.h>
+#include<signal.h>
+volatile long counter = 2;
+void handle1(int sig)
+{
+    sigset_t mask,prev_mask;
+    sigfillset(&mask);
+    sigprocmask(SIG_BLOCK,&mask,&prev_mask);
+    printf("%d\n",--counter);
+    sigprocmask(SIG_SETMASK,&prev_mask,NULL);
+    exit(0);
+}
+int main()
+{
+    pid_t pid;
+    sigset_t mask,prev_mask;
+    printf("%ld\n",counter);
+    fflush(stdout);
+    signal(SIGUSR1,handle1);
+    if((pid=fork())==0)
+    {
+        while(1)
+        {};
+    }
+    kill(pid,SIGUSR1);
+    waitpid(-1,NULL,0);
+    sigfillset(&mask);
+    printf("%ld\n",mask);
+    sigprocmask(SIG_BLOCK,&mask,&prev_mask);
+    printf("%d\n",++counter);
+    sigprocmask(SIG_SETMASK,&prev_mask,NULL);
+    exit(0);
+}
+~~~
+
+![image-20201120163407922](CSAPP-第八章-异常.assets/image-20201120163407922.png)
+
+`同步流以避免讨厌的并发错误：`
+
+~~~c
+#include<signal.h>
+int sigaction(int signum,struct sigaction *act,struct sigaction *oldact);//成功则返回1，失败则返回-1
+~~~
+
+## 竞争引发错误
+
+![image-20201120175739274](CSAPP-第八章-异常.assets/image-20201120175739274.png)
+
+这个之前看过，当时有点蒙，现在觉得真鸡儿简单。
+
+![image-20201120175819110](CSAPP-第八章-异常.assets/image-20201120175819110.png)
+
+`解决方案`：
+
+利用信号量同步进程：
+
+![image-20201120180940861](CSAPP-第八章-异常.assets/image-20201120180940861.png)
+
+**此处防止竞争的核心思想：利用sigprocmask来同步进程，在这个例子里面，父进程保证相应的deletejob之前执行addjob,因为在fork后，父进程阻塞了内核信号，那么必然就不会执行信号处理程序deletejob，当addjob执行完之后解除阻塞，成功避免了竞争的影响。**
+
+`显示的等待信号：`
+
+~~~c
+#include<signal.h>
+int sigsuspend(const sigset_t *mask);
+~~~
+
+`sigsuspend`函数会暂时用`mask`替换当前的阻塞集合，然后挂起该进程，直到收到一个信号。行为结果：
+
+* 运行一个处理程序。那么`sigsuspend`从处理程序返回，恢复调用`sigsuspend`时候的阻塞集合。
+* 终止该进程，此时该进程不从`sigsuspend`返回就直接终止。
+
+![image-20201120203503195](CSAPP-第八章-异常.assets/image-20201120203503195.png)
+
+`原子属性`成功的消除了潜在的竞争。
+
+例子：
+
+~~~c
+#include<stdio.h>
+#include<signal.h>
+#include<errno.h>
+volatile sig_atomic_t pid;
+void sigchld_handler(int s)
+{
+    int olderrno = errno;
+    pid = waitpid(-1,NULL,0);
+    errno = olderrno;
+}
+void sigint_handler(int s)
+{
+
+}
+int main()
+{
+    sigset_t mask,prev;
+    signal(SIGCHLD,sigchld_handler);
+    signal(SIGINT,sigint_handler);
+    sigemptyset(&mask);
+    sigaddset(&mask,SIGCHLD);
+    while(1)
+    {
+        sigprocmask(SIG_BLOCK,&mask,&prev);
+        if((pid=fork())==0)
+        {
+            exit(0);
+        }
+        pid = 0;
+        sigprocmask(SIG_SETMASK,&prev,NULL);
+        while(!pid)
+        {
+            pause();
+        }
+        printf(".");
+    }
+    return 0;
+}
+~~~
+
+**如果在while测试之后，pause测试之前收到SIGCHLD信号，pause会永远睡眠**。
+
+这里就要说一下`pause()`的中断条件了，因为要想终止`pause`，只能是因为`SIGCHLD`信号的信号处理程序，那么上述要点就很清楚了。
+
+![image-20201120201412481](CSAPP-第八章-异常.assets/image-20201120201412481.png)
+
+可以看到大量循环之后，程序卡死。
+
+`使用sigsuspend`进行改进。
+
+~~~c
+#include<stdio.h>
+#include<signal.h>
+#include<errno.h>
+volatile sig_atomic_t pid;
+void sigchld_handler(int s)
+{
+    int olderrno = errno;
+    pid = waitpid(-1,NULL,0);
+    errno = olderrno;
+}
+void sigint_handler(int s)
+{
+}
+int main()
+{
+    sigset_t mask,prev;
+    signal(SIGCHLD,sigchld_handler);
+    signal(SIGINT,sigint_handler);
+    sigemptyset(&mask);
+    sigaddset(&mask,SIGCHLD);
+    while(1)
+    {
+        sigprocmask(SIG_BLOCK,&mask,&prev);
+        if((pid=fork())==0)
+        {
+            exit(0);
+        }
+        pid = 0;
+        while(!pid)
+        {
+            sigsuspend(&prev);
+        }
+        sigprocmask(SIG_SETMASK,&prev,NULL);
+        printf(".");
+    }
+    return 0;
+}
+~~~
 
 
 
