@@ -18,3 +18,10 @@
 
 ![image-20201112194636660](CSAPP-shell-lab.assets/image-20201112194636660.png)
 
+## 相关重要函数
+
+~~~c
+int  sscanf( string str, string fmt, mixed var1, mixed var2 ... );  
+~~~
+
+sscanf与scanf类似，都是用于输入的，只是后者以屏幕(stdin)为输入源，前者以固定字符串为输入源。
