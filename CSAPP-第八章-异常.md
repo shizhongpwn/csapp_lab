@@ -806,6 +806,271 @@ int main()
 }
 ~~~
 
+`非本地跳转`
+
+> C语言提供用户级异常控制流形式，称为非本地跳转，它控制直接从一个函数转移到另一个当前正在执行的函数，
+
+~~~c
+#include<setjmp.h>
+int setjmp(jmp_buf env); //返回0，但是返回值不可以赋值给变量
+int sigsetjmp(sigjump_buf env,int savesigs);//返回非0
+~~~
+
+* `env`缓冲区保存当前调用环境，供`longjmp`使用，返回0
+
+~~~c
+#include<setjmp.h>
+void longjmp(jmp_buf env,int retval);
+void siglongjmp(sigjmp_buf env,int retval);
+~~~
+
+* `longjmp`函数从`env`缓冲区恢复调用环境，然后触发一个最近一次初始化env的setjmp调用的返回，然后setjmp返回，并带有非0的返回值`retval`
+
+**setjmp函数只被调用一次，但是会返回多次，但是longjmp函数被调用一次却从不返回。**
+
+test-demo
+
+~~~c
+#include<stdio.h>
+#include<setjmp.h>
+jmp_buf buf;
+int error1 = 0;
+int error2 = 1;
+void foo(void),bar(void);
+int main()
+{
+    switch(setjmp(buf))
+    {
+        case 0:
+            foo();
+            break;
+        case 1:
+            printf("Detected an error1 condition in foo\n");
+            break;
+        case 2:
+            printf("Detected an error2 condition in foo\n");
+            break;
+        default:
+            printf("Unkonw error out");
+    }
+    return 0;
+}
+void foo(void)
+{
+    if(error1)
+    {
+        longjmp(buf,1);
+    }
+    bar();
+}
+void bar(void)
+{
+    if(error2)
+    {
+        longjmp(buf,2);
+    }
+}
+~~~
+
+![image-20201121094255263](CSAPP-第八章-异常.assets/image-20201121094255263.png)
+
+可以看出跳转所带来的的作用。
+
+其对于信号量跳转的作用。
+
+对应函数为`sigsetjmp`和`siglongjmp`，这是程序信号量可以使用的版本。
+
+函数区别在于其可以保存当前状态的`signal mask`信号量集
+
+~~~c
+#include<setjmp.h>
+int sigsetjmp(sigjmp_buf env, int savesigs);
+~~~
+
+testdemo
+
+~~~c
+#include<stdio.h>
+#include<setjmp.h>
+#include<signal.h>
+sigjmp_buf buf;
+void handler(int sig)
+{
+    siglongjmp(buf,1);
+}
+int main()
+{
+
+    if(!sigsetjmp(buf,1))
+    {
+        signal(SIGINT,handler);
+        char buf[20] = "starting\n";
+        write(1,buf,strlen(buf));
+    }
+    else
+    {
+        char buf2[20] = "restarting\n";
+        write(1,buf2,strlen(buf2));
+    }
+    while(1)
+    {
+        sleep(1);
+        char buf3[20] = "processing\n";
+        write(1,buf3,strlen(buf3));
+    }
+    return 0;
+}
+~~~
+
+![image-20201121100501152](CSAPP-第八章-异常.assets/image-20201121100501152.png)
+
+`安全隐患`
+
+不能让`signal`函数在`sigsetjmp`函数的前面，因为可能会引发条件竞争。这会使得`siglongjmp`在`sigsetjmp`之前被执行。
+
+`有意思的习题`：
+
+~~~c
+#include<stdio.h>
+void doit()
+{
+    fork();
+    fork();
+    printf("hello world!\n");
+    return;
+}
+int main()
+{
+    doit();
+    printf("hello world!\n");
+    return 0;
+}
+~~~
+
+打印8个`hello world!`.
+
+~~~c
+#include<stdio.h>
+#include<sys/types.h>
+int count = 2;
+int main()
+{
+    pid_t pid;
+    if((pid=fork())==0)
+    {
+        count--;
+        printf("sun count = %d\n",count);
+        exit(0);
+    }
+    else
+    {
+        wait(NULL);
+        printf("father count %d\n",++count);
+    }
+    return 0;
+}
+~~~
+
+![image-20201121102045997](CSAPP-第八章-异常.assets/image-20201121102045997.png)
+
+对于全局变量也不是共享的，父子进程之间共享的只有代码段。
+
+`8.18`
+
+~~~c
+#include<stdlib.h>
+void atexit(void (*func)(void));
+~~~
+
+登记函数：按照`ISO C`的规矩，一个进程至少可以登记32个函数，这些函数都会被`exit`函数自动调用。
+
+**exit调用这些注册函数的顺序与它们 登记时候的顺序相反。同一个函数如若登记多次，则也会被调用多次。**
+
+`8.20`
+
+~~~c
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+int main(int argc,char *argv[],char *envp[])
+{
+    if(execve("/bin/ls",argv,envp)==-1)
+    {
+        printf("error\n");
+    }
+    return 0;
+}
+~~~
+
+感觉这样不算是真正实现了吧。。。
+
+8.22
+
+`mysystem`
+
+~~~c
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<sys/types.h>
+#include<errno.h>
+#define MAXCOMMAND 255
+int mysystem(char *cmd)
+{
+    pid_t pid;
+    int status;
+    if(cmd==NULL)
+    {
+        return -1;
+    }
+    if((pid=fork())==0)
+    {
+        char *argv[] = {"sh","-c",cmd,NULL};
+        execve("/bin/sh",argv,NULL);
+        exit(-1);
+    }
+    while(1)
+    {
+        if(waitpid(pid,&status,0)==-1)
+        {
+            if(errno!=EINTR)
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            if(WIFEXITED(status))
+            {
+                return WEXITSTATUS(status);
+            }
+            else
+            {
+                return status;
+            }
+        }
+    }
+}
+int main(int argc,char *argv[],char *envp[])
+{
+    int status;
+    mysystem(argv[1]);
+    return 0;
+}
+~~~
+
+> 值得注意的是此时的`execve`的参数指针数组的第一个参数，如果执行的是`/bin/ls`，那么第一个就是`ls`.
+
+
+
+完结，还有挑战性的就是shell-lab了，在实验部分已写。
+
+
+
+
+
+
+
 
 
 
